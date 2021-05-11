@@ -1,0 +1,8 @@
+
+MuonAnalyzer/*.root
+MuonAnalyzer/*.png
+MuonAnalyzer/MuonAnalizer11.py
+**~
+/.*
+MuonAnalyzer/.__afs*
+!/.gitignore
