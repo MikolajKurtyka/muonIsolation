@@ -17,6 +17,7 @@
 #include "SimDataFormats/TrackingAnalysis/interface/TrackingVertexContainer.h"
 #include "SimDataFormats/GeneratorProducts/interface/HepMCProduct.h"
 
+#include "DataFormats/Math/interface/deltaR.h"
 #include "TProfile.h"
 #include "TH1D.h"
 #include "TH2D.h"
@@ -26,6 +27,8 @@
 #include <sstream>
 #include <typeinfo>
 #include <math.h>
+#include <string>
+#include <cstring>
 
 //useful for tp
 typedef edm::RefVector<std::vector<TrackingParticle>> TrackingParticleContainer;
@@ -65,11 +68,13 @@ private:
 
   edm::ParameterSet theConfig;
   unsigned int theEventCount;
+  std::string rootFileName;
 
   TFile *myRootFile;
-  TH1D *h_Pt_Sum;
-  TH1D *h_Pt_Sum_Bx;
-  TH1D *h_Pt_Sum_Bx_Vrtx;
+  TH2D *h_dr_Pt;
+  TH2D *h_dr_Pt_Sum;
+  TH2D *h_dz_drho;
+  TH1D *h_dz;
 
   //TrackingParticleCollection TrackingParticleCollection_;
   edm::EDGetTokenT< TrackingParticleCollection> vec_TrackingParticle_Token_;
@@ -89,6 +94,8 @@ MuonAnalyzer::MuonAnalyzer(const edm::ParameterSet& conf)
 //vec_TrackingParticle_Token_(consumes<TrackingParticleCollection>( theConfig.getUntrackedParameter<edm::InputTag>("trackingTruth")));
 //edm::InputTag trackingTruth = theConfig.getUntrackedParameter<edm::InputTag>("trackingTruth");
 vec_TrackingParticle_Token_  = consumes< TrackingParticleCollection>(edm::InputTag("mix", "MergedTrackTruth"));
+
+rootFileName = theConfig.getUntrackedParameter<std::string>("rootFileName");
 }
 
 
@@ -99,24 +106,30 @@ MuonAnalyzer::~MuonAnalyzer()
 
 void MuonAnalyzer::beginJob()
 {  
-  myRootFile = new TFile("data.root", "RECREATE");
-  h_Pt_Sum = new TH1D("h_Pt_Sum", "h_Pt_Sum; Pt_Sum; #muons", 50, 0. , 50.);
-  h_Pt_Sum_Bx = new TH1D("h_Pt_Sum_Bx", "h_Pt_Sum_Bx; Pt_Sum; #muons", 30, 0., 30.); 
-  h_Pt_Sum_Bx_Vrtx = new TH1D("h_Pt_Sum_Bx_Vrtx", "h_Pt_Sum_Bx_Vrtx; Pt_Sum; #muons", 30, 0., 30.); 
+  char crootFileName[rootFileName.length() + 1];
+  strcpy(crootFileName, rootFileName.c_str());
+
+  myRootFile = new TFile(crootFileName, "RECREATE");
+  h_dz =  new TH1D("h_dz", "h_dz; dz; #n", 1000, -10., 10.);
+  h_dr_Pt  = new TH2D("h_dr_Pt", "h_dr_Pt; dr; Pt", 100, 0., 1.,200, 0., 4.);
+  h_dr_Pt_Sum  = new TH2D("h_dr_Pt_Sum", "h_dr_Pt_Sum; dr; Pt_Sum", 100, 0., 1., 1000, 0., 5.);
+  h_dz_drho = new TH2D("h_dz_drho", "h_dz_drho; dr; drho", 200, -10., 10., 100, 0., 1.);
   std::cout << "HERE MuonAnalyzer::beginJob()" << std::endl;
 }
 
 void MuonAnalyzer::endJob()
 { 
-  h_Pt_Sum->Write();
-  h_Pt_Sum_Bx->Write();
-  h_Pt_Sum_Bx_Vrtx->Write();
+  h_dz->Write();
+  h_dr_Pt->Write();
+  h_dr_Pt_Sum->Write();
+  h_dz_drho->Write();
   myRootFile->Write();
   myRootFile->Close();
   
-  delete h_Pt_Sum;
-  delete h_Pt_Sum_Bx;
-  delete h_Pt_Sum_Bx_Vrtx;
+  delete h_dz;
+  delete h_dr_Pt;
+  delete h_dr_Pt_Sum;
+  delete h_dz_drho;
   delete myRootFile;
   std::cout << "HERE MuonAnalyzer::endJob()" << std::endl;
 }
@@ -135,223 +148,51 @@ void MuonAnalyzer::analyze(
     //const TrackingParticleCollection *tPC   = TruthTrackContainer.product();
 
 
-	int m = 0;
-	int m5 = 0;
-	int mI = 0;
-
-
 	for(std::vector<TrackingParticle>::const_iterator itP = tPC->begin(); itP != tPC->end(); ++itP){
-			bx = itP->eventId().bunchCrossing();
-			event = itP->eventId().event();
+			int bx = itP->eventId().bunchCrossing();
 
 		//if muon with pt bigger than 2
-		if(abs(itP->pdgId()) == 13 && itP->pt() >2){
+		if(abs(itP->pdgId()) == 13 && itP->pt() >20. && bx == 0){
 
 			//++m;
-			//std::cout << "TP momentum, q, ID, & Event #: " << itP->p4() << " " << itP->charge() << " " << itP->pdgId() << " bx: "     << itP->eventId().bunchCrossing() << " " << itP->eventId().event() << std::endl;
-
-			//std::cout << " TP Vertex " << itP->vertex() << std::endl;
-			//std::cout << " Source vertex " << itP->parentVertex()->position() << std::endl ;
-
 			
-			//use for sum of pt of particles around muon, with some conditions
-			double PtSum = 0, PtSumBx=0, PtSumBxVrtx=0;
 
+			int nxbins = h_dr_Pt_Sum->GetNbinsX();
+			double Pt_Sum[nxbins] = {0.};
 			//loop to check relations between our chosen muon and rest of the particles
 			for(std::vector<TrackingParticle>::const_iterator jtP = tPC->begin(); jtP != tPC->end(); ++jtP){
 				//if not muon with pt bigger that 1 GeV
 				if((abs(jtP->pdgId()) != 13) && jtP->pt() > 1){
 
-					//dr calculation between muon and other particle
-					dr = ROOT::Math::VectorUtil::DeltaR(itP->p4() , jtP->p4());
-
-					if(dr < 0.2){
-						//Ptsum within dr = 0.2
-						PtSum += jtP->pt();
-	
-						if(itP->eventId().bunchCrossing() == jtP->eventId().bunchCrossing()){
-							//same bunchcorssing of muon and j particle
-							PtSumBx += jtP->pt();
-							if(abs(itP->vz() - jtP->vz()) < 0.2){
-								//close vertexes, only in z axis
-								PtSumBxVrtx += jtP->pt();
-							}
-						}
-					}						
-				}
-			}
-			std::cout << "Pt sum " << PtSum << std::endl;
-			h_Pt_Sum->Fill(PtSum/(itP->pt()));
-			h_Pt_Sum_Bx->Fill(PtSumBx/(itP->pt()));
-			if(PtSumBxVrtx/(itP->pt()) > 1) h_Pt_Sum_Bx_Vrtx->Fill(PtSumBxVrtx/(itP->pt()));
-		}
-	}
-	/*for(std::vector<TrackingParticle>::const_iterator itP=tPC.begin(); itP != tPC.end(); itP++){
-		//std::cout << n++ << std::endl;
-		//std::cout << itP->pdgId() << " " << itP->mass() << std::endl;
-		++m;
-		if(abs(itP->pdgId()) == 13 && itP->pt() > 2){
-			
-			const std::vector<SimTrack> &simTracks = itP->g4Tracks();
-			int size = simTracks.size();
-			for (std::vector<SimTrack>::const_iterator it=simTracks.begin(); it<simTracks.end(); it++) {
-    			const SimTrack & track= *it;
-				if(track.type() == itP->pdgId()){
-					++m5;
-					std::cout << "Correctly clasified muon" << std::endl;
-					std::cout << "Energy sum in cone **** calculatations begin" << std::endl;
-
-					int nC = 0;
-					int P = 0;
-					double phi = itP->phi();
-					double eta = itP->eta();
-					double sumPt = 0;
-
-					for(std::vector<TrackingParticle>::const_iterator jtP=tPC.begin(); jtP != tPC.end(); jtP++){
-						if(abs(jtP->pdgId()) != 13){
 					
-							double deltaPhi = (jtP->phi()- phi);
-							double deltaEta = (jtP->eta()- eta);
-							
-							double DeltaR = sqrt(pow(deltaPhi,2)+pow(deltaEta, 2));	
-							++P;
-							if(DeltaR < 0.1){
-								sumPt += jtP->pt();
-								++nC;
-							}
-									
-						}
+					if((itP->eventId().bunchCrossing() == jtP->eventId().bunchCrossing())){
+// && itP->eventId().bunchCrossing()==0){
+						double dr = reco::deltaR(itP->eta(), itP->phi(), jtP->eta(), jtP->phi());
+						h_dr_Pt->Fill(dr, (jtP->pt())/(itP->pt()));
+					
+						double drho = sqrt((itP->vx() - jtP->vx())*(itP->vx() - jtP->vx())+(itP->vy() - jtP->vy())*(itP->vy() - jtP->vy()));
+						h_dz_drho->Fill(itP->vz() - jtP->vz(), drho);
+						h_dz->Fill(itP->vz() - jtP->vz());
 
+						for(int bin = 0; bin < nxbins; ++bin){
+							double bin_dr = h_dr_Pt_Sum->GetXaxis()->GetBinLowEdge(bin) + 2* h_dr_Pt_Sum->GetXaxis()->GetBinWidth(bin);
+							//std::cout << bin_dr << std::endl;
+							if((dr<bin_dr)&&(abs(itP->vz() - jtP->vz()) < 0.2)){
+								Pt_Sum[bin] += jtP->pt();
+							}
+						}
 					}
-					std::cout << "Energy sum in cone *** calculations end" << std::endl;
-					std::cout << "Pt sum in cone " <<sumPt << " of " << nC << " particles from" << P <<  std::endl;
-					if(sumPt < 5) ++mI;
+											
+				}
+			}
 
-				}
-				else{
-					std::cout<< "Mismatch b/t TrackingParticle and Geant types" << std::endl;
-				}
-					
+			for(int bin = 0; bin < nxbins; ++bin){
+				double bin_dr = h_dr_Pt_Sum->GetXaxis()->GetBinLowEdge(bin) + 2* h_dr_Pt_Sum->GetXaxis()->GetBinWidth(bin);
+				//std::cout << bin << " " << bin_dr << std::endl;				
+				h_dr_Pt_Sum->Fill(bin_dr+0.005, Pt_Sum[bin]/itP->pt());
 			}
 		}
-		
-
-
 	}
-	std::cout << m << " " << m5 << " " << mI << std::endl; */
-/*
-  std::cout <<" SIMULATED MUONS: "<<std::endl;
-  edm::Handle<edm::SimTrackContainer> simTk;
-  ev.getByToken(inputSim, simTk);
-  std::vector<SimTrack> mySimTracks = *(simTk.product());
-*/  
-
-/*
-  for (std::vector<SimTrack>::const_iterator it=mySimTracks.begin(); it<mySimTracks.end(); it++) {
-    const SimTrack & track = *it;
-    if ( track.type() == -99) continue;
-    if ( track.vertIndex() != 0) continue;
-
-    //sucessful muon, add to count
-    simMuonCount++;
-
-    phi_sim = track.momentum().phi(); //momentum azimutal angle
-    pt_sim = track.momentum().pt(); //transverse momentum
-    eta_sim = track.momentum().eta(); //pseudorapidity
-    std::cout <<" trackId: " <<track.trackId() 
-          << " pt_sim: " << pt_sim <<" eta_sim: "<<eta_sim<<" phi_sim: "<<phi_sim
-          <<" vtx: "<<track.vertIndex()<<" type: "<<track.type() // 13 or -13 is a muon
-          << std::endl; 
-  }
-  if(simMuonCount!=1) {
-     cout<<"    Simulated muon count != 1"<<endl;
-     return;
-  }
-  */
-
-  // tracking particles
-
-
-
-
-/*
-  cout << "Tracking particle" << endl;
-  edm::Handle< std::vector< TrackingParticle > > trackingParticleHandle;
-  ev.getByToken(TrackingParticleToken_, trackingParticleHandle);
-  
-  cout << "Number of tracked particles " << trackingParticleHandle->size() << endl;
-  int nM = 0;  
-  int nM2 = 0;
-  int nM5 = 0;
-  int nM10 = 0;
-  for(unsigned int iTP = 0; iTP < trackingParticleHandle->size(); ++iTP){
-	edm::Ptr<TrackingParticle> tpPtr(trackingParticleHandle, iTP);
- 	
-	if(abs(tpPtr->pdgId()) == 13 ){
-		histo->Fill(tpPtr->pt());
-		++nM; 
-		++tnM;
-		if(tpPtr->pt() > 2){
-			 ++nM2;
-			 ++tnM2;
-			}
-		if(tpPtr->pt() > 5) ++nM5;
-		if(tpPtr->pt() > 10){
-			 ++nM10;
-		   	 ++tnM10;
-			 cout << printTrackigParticleShort(tpPtr) << endl;
-			}
-	} 		
-		
-  }*/
-
-/*
-  edm::Handle<TrackingParticleCollection> mergedPH;
-  edm::Handle<TrackingVertexCollection> mergedVH;
-
-  edm::InputTag trackingTruth = theConfig.getUntrackedParameter<edm::InputTag>("trackingTruth");
-
-
-  ev.getByLabel(trackingTruth, mergedPH);
-  ev.getByLabel(trackingTruth, mergedVH);
-
-  std::cout << "fuck" << std::endl;
-
-  if(theConfig.getUntrackedParameter<bool>("dumpVertexes")) {
-
- 
-    std::cout << std::endl << "Dumping merged vertices: " << std::endl;
-    for (TrackingVertexCollection::const_iterator iVertex = mergedVH->begin(); iVertex != mergedVH->end(); ++iVertex){
-	std::cout << std::endl << &iVertex;
-	std::cout << "Daughters of this vertex:" << std::endl;
-	//std::cout << iVertex<< std::endl;
-    		//for (TrackingParticleRefVector::iterator iTrack = iVertex->daughterTracks_begin(); iTrack != iVertex->daughterTracks_end(); ++iTrack) std::cout << "yes " << std::endl;//std::cout << **iTrack;
-    }
-
-    std::cout << "in" <<std::endl;
-  }
- 
-  if (theConfig.getUntrackedParameter<bool>("dumpVertexes")) {
-    std::cout << std::endl << "Dumping merged vertices: " << std::endl;
-    for (TrackingVertexCollection::const_iterator iVertex = mergedVH->begin(); iVertex != mergedVH->end(); ++iVertex) {
-      std::cout << std::endl << *iVertex;
-      std::cout << "Daughters of this vertex:" << std::endl;
-      for (tp_iterator iTrack = iVertex->daughterTracks_begin(); iTrack != iVertex->daughterTracks_end(); ++iTrack)
-        std::cout << **iTrack;
-    }
-    std::cout << std::endl;
-  }
-
-  if (theConfig.getUntrackedParameter<bool>("dumpOnlyBremsstrahlung")) {
-    std::cout << std::endl << "Dumping only merged tracks: " << std::endl;
-    for (TrackingParticleCollection::const_iterator iTrack = mergedPH->begin(); iTrack != mergedPH->end(); ++iTrack)
-      if (iTrack->g4Tracks().size() > 1)
-        std::cout << &iTrack << std::endl;
-  } else {
-    std::cout << std::endl << "Dump of merged tracks: " << std::endl;
-    for (TrackingParticleCollection::const_iterator iTrack = mergedPH->begin(); iTrack != mergedPH->end(); ++iTrack)
-      std::cout << &iTrack << std::endl;
-  }*/
 
 }
 
